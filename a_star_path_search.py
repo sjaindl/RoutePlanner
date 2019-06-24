@@ -4,10 +4,10 @@
 # The calculation is based on the Euclidean distance (it could also be based on other calculations as the Manhattan distance, but Euclidean distance is the most accurate here).
 # The total cost is stored in a min priority queue, so the current element with the min cost can be stored and retrieved in log(n) time, each.
 # When the min element is the goal, the goal check is successful. It returns the path, which is backtracked by links to predecessors -> This requires just constant O(1) additional storage. 
-# A visited set keeps track of intersections explored so far. 
-# Altogether space requirements are: O(n) for priority queue + O(n) for explored set = O(n)
-# Altogether the runtime for shortest_path is: O(V) for frontier while loop * O(E) for checking outgoing roads from intersection (duplicate checks when updating elements)
-# .. + O(V) for building backtracking path. This is: O(V) * O(E) + O(V) = O(E*V), where E are roads (edges) and V are intersections (vertices)
+# A visited set keeps track of intersections explored so far. An open dictionary keeps track of intersections currently explored (not popped off yet of the priority queue).
+# Altogether space requirements are: O(n) for priority queue + O(n) for explored set + O(n) for opened dict = O(n)
+# Altogether the runtime for shortest_path is: O(V) for frontier while loop * O(log V) for the priority queue * O(E) for checking outgoing roads from intersection (duplicate checks when updating elements)
+# .. + O(V) for building backtracking path. This is: O(V) * O(log V) * O(E) + O(V) = O(E * V log V), where E are roads (edges) and V are intersections (vertices)
 
 from math import sqrt
 from queue import PriorityQueue
@@ -26,9 +26,17 @@ class Intersection:
     def __lt__(self, other):
         return self.g_cost + self.h_cost < other.g_cost + other.h_cost
 
+    def __eq__(self, other):
+        return other and self.number == other.number
+
+    def __hash__(self):
+        return hash(self.number)
+
 def shortest_path(map, start, goal):
     frontier = PriorityQueue() #frontier is a priority queue
-    explored = set() #marker for already explored
+    explored = set() #marker for already explored (closed list)
+    opened = dict() #open list containing intersections currently explored
+    
     #The unexplored part is discovered by examining neighbours on the frontier, no need to keep track of it in a separate data structure!
     
     #push start element on queue (as Intersection)
@@ -37,38 +45,45 @@ def shortest_path(map, start, goal):
     while frontier.qsize() > 0:
         #pop min element
         intersection = frontier.get()
+        
+        # If an element has already been popped off the priority queue, its minimal path has been found.
+        # Therefore we put it in the explored/closed list. If we pop such an item off, it was a neighbour from some
+        # previous intersection with a longer path. Therefore the element is skipped.
+        if intersection in explored:
+            opened.pop(intersection.number, None) # Remove item from opened list, too (if existing). It's not currently being explored anymore.
+            continue
+
+        explored.add(intersection)
 
         #if element = goal: terminate
         if intersection.number == goal:
             return terminate_and_build_path(intersection)
 
-        explored.add(intersection)
-
         #check neighbors .. map.roads[xx]
         for road in map.roads[intersection.number]:
-            
+            # If an element has already been popped off the priority queue, its minimal path has been found.
+            # Therefore it is in the explored/closed list and can be skipped as new possible road.
+            if Intersection(road) in explored:
+                continue
+
             #calc g and h cost (based on euclidean distance)
             g_cost = intersection.g_cost + path_cost(map, intersection.number, road)
             h_cost = estimated_distance_to_goal(map, road, goal)
             cost = g_cost + h_cost
 
-            element_already_explored = False
-            for element in explored:
-                if element.number == road:
-                    if cost < element.cost(): #already explored & cost lower: update frontier element
-                        element.g_cost = g_cost
-                        element.h_cost = h_cost
-                        element.path.append(road)
-                    #else: discard (cost higher)
-                    element_already_explored = True
-                    break
-                
-            if not element_already_explored:
+            element = opened.get(road)
+            if element != None and element.cost() > cost:
+                element.g_cost = g_cost
+                element.h_cost = h_cost
+                element.predecessor = intersection
+            
+            else:
                 #if not already explored: put on frontier
                 new_intersection = Intersection(road, intersection, g_cost, h_cost)
                 frontier.put(new_intersection)
+                opened[road] = new_intersection
 
-    return None
+    return [] # in case there is no path, an empty array is returned
 
 def path_cost(map, intersection, goal): #g function
     return euclidean_distance(map.intersections[goal][0], map.intersections[intersection][0], map.intersections[goal][1], map.intersections[intersection][1])
